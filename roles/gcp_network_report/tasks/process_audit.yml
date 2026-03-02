@@ -1,0 +1,23 @@
+- name: Activate service account
+  command: >
+    gcloud auth activate-service-account
+    --key-file={{ project.service_account }}
+
+- name: Fetch audit logs
+  command: >
+    gcloud logging read
+    'logName="projects/{{ project.name }}/logs/cloudaudit.googleapis.com%2Factivity"
+     AND (
+       protoPayload.methodName:"insert"
+       OR
+       protoPayload.methodName:"delete"
+     )
+     AND timestamp>="{{ lookup("pipe", "date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ") }}"'
+    --project={{ project.name }}
+    --format=json
+  register: project_logs
+  ignore_errors: yes
+
+- name: Append logs
+  set_fact:
+    raw_audit_logs: "{{ raw_audit_logs + [ project_logs.stdout | default('[]') ] }}"

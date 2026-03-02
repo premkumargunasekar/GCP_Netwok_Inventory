@@ -1,0 +1,13 @@
+---
+- name: GCP Network Governance Reporting
+  hosts: localhost
+  gather_facts: true
+
+  collections:
+    - google.cloud
+
+  vars_files:
+    - inventory/projects.yml
+
+  roles:
+    - gcp_network_report

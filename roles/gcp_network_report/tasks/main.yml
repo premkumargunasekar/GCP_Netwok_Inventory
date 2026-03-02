@@ -1,0 +1,169 @@
+---
+# -------------------------------------------------
+# Ensure reports directory
+# -------------------------------------------------
+- name: Ensure reports directory exists
+  file:
+    path: "{{ playbook_dir }}/reports"
+    state: directory
+
+# -------------------------------------------------
+# Initialize aggregated inventory
+# -------------------------------------------------
+- name: Initialize aggregated inventory
+  set_fact:
+    aggregated_inventory: []
+
+# =================================================
+#                VPC NETWORKS (GLOBAL)
+# =================================================
+- name: Collect VPC Networks
+  google.cloud.gcp_compute_network_info:
+    project: "{{ item.name }}"
+    auth_kind: serviceaccount
+    service_account_file: "{{ item.service_account }}"
+  loop: "{{ gcp_projects }}"
+  register: vpc_info
+
+- name: Append VPCs to aggregated inventory
+  set_fact:
+    aggregated_inventory: "{{ aggregated_inventory + [ {
+      'name': resource.name,
+      'environment': project.environment,
+      'component_type': 'VPC',
+      'region': 'global',
+      'creationTimestamp': resource.creationTimestamp | default('NA'),
+      'project_name': project.name
+    } ] }}"
+  loop: "{{ vpc_info.results | subelements('resources', skip_missing=True) }}"
+  vars:
+    project: "{{ item.0.item }}"
+    resource: "{{ item.1 }}"
+
+# =================================================
+#                CLOUD ROUTERS
+# =================================================
+- name: Collect Cloud Routers
+  google.cloud.gcp_compute_router_info:
+    project: "{{ item.0.name }}"
+    region: "{{ item.1 }}"
+    auth_kind: serviceaccount
+    service_account_file: "{{ item.0.service_account }}"
+  loop: "{{ gcp_projects | product(gcp_regions) | list }}"
+  register: router_info
+
+- name: Append Routers
+  set_fact:
+    aggregated_inventory: "{{ aggregated_inventory + [ {
+      'name': resource.name,
+      'environment': project.environment,
+      'component_type': 'Cloud Router',
+      'region': region,
+      'creationTimestamp': resource.creationTimestamp | default('NA'),
+      'project_name': project.name
+    } ] }}"
+  loop: "{{ router_info.results | subelements('resources', skip_missing=True) }}"
+  vars:
+    project: "{{ item.0.item.0 }}"
+    region: "{{ item.0.item.1 }}"
+    resource: "{{ item.1 }}"
+
+# =================================================
+#                LOAD BALANCERS
+# =================================================
+- name: Collect Forwarding Rules
+  google.cloud.gcp_compute_forwarding_rule_info:
+    project: "{{ item.0.name }}"
+    region: "{{ item.1 }}"
+    auth_kind: serviceaccount
+    service_account_file: "{{ item.0.service_account }}"
+  loop: "{{ gcp_projects | product(gcp_regions) | list }}"
+  register: lb_info
+
+- name: Append Load Balancers
+  set_fact:
+    aggregated_inventory: "{{ aggregated_inventory + [ {
+      'name': resource.name,
+      'environment': project.environment,
+      'component_type': 'Load Balancer',
+      'region': region,
+      'creationTimestamp': resource.creationTimestamp | default('NA'),
+      'project_name': project.name
+    } ] }}"
+  loop: "{{ lb_info.results | subelements('resources', skip_missing=True) }}"
+  vars:
+    project: "{{ item.0.item.0 }}"
+    region: "{{ item.0.item.1 }}"
+    resource: "{{ item.1 }}"
+
+# =================================================
+#           INTERCONNECT ATTACHMENTS
+# =================================================
+- name: Collect Interconnect Attachments
+  google.cloud.gcp_compute_interconnect_attachment_info:
+    project: "{{ item.0.name }}"
+    region: "{{ item.1 }}"
+    auth_kind: serviceaccount
+    service_account_file: "{{ item.0.service_account }}"
+  loop: "{{ gcp_projects | product(gcp_regions) | list }}"
+  register: ic_info
+
+- name: Append Interconnects
+  set_fact:
+    aggregated_inventory: "{{ aggregated_inventory + [ {
+      'name': resource.name,
+      'environment': project.environment,
+      'component_type': 'Cloud Interconnect',
+      'region': region,
+      'creationTimestamp': resource.creationTimestamp | default('NA'),
+      'project_name': project.name
+    } ] }}"
+  loop: "{{ ic_info.results | subelements('resources', skip_missing=True) }}"
+  vars:
+    project: "{{ item.0.item.0 }}"
+    region: "{{ item.0.item.1 }}"
+    resource: "{{ item.1 }}"
+
+
+# =================================================
+# FETCH AUDIT LOGS PER PROJECT
+# =================================================
+
+- name: Initialize raw audit logs
+  set_fact:
+    raw_audit_logs: []
+
+- name: Process audit logs per project
+  include_tasks: process_audit.yml
+  loop: "{{ gcp_projects }}"
+  loop_control:
+    loop_var: project
+
+- name: Convert audit logs to structured JSON
+  set_fact:
+    audit_logs: >-
+      {{
+        raw_audit_logs
+        | reject('equalto', '')
+        | map('from_json')
+        | list
+        | flatten
+      }}      
+
+# =================================================
+#           CALL CUSTOM REPORT MODULE
+# =================================================
+- name: Generate GCP Network Governance Report
+  generate_report_v4:
+    inventory_data: "{{ aggregated_inventory }}"
+    audit_logs: "{{ audit_logs }}"
+    project_env_map: "{{ dict(gcp_projects | map(attribute='name') | zip(gcp_projects | map(attribute='environment'))) }}"
+    report_dir: "{{ playbook_dir }}/reports"
+  register: report_output
+
+- name: Display Report Result
+  debug:
+    msg:
+      - "Report File: {{ report_output.report_file | default('No file generated') }}"
+      - "Resources Added: {{ report_output.added | default(0) }}"
+      - "Resources Deleted: {{ report_output.deleted | default(0) }}"

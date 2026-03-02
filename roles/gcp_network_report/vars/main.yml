@@ -1,0 +1,5 @@
+gcp_regions:
+  - asia-south1
+  - asia-east1
+  - us-central1
+  - europe-west1
