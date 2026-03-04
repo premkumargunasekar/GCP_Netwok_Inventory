@@ -1,0 +1,18 @@
+---
+- name: GCP Network Governance Report
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+
+  - name: Generate governance report
+    command:
+      argv:
+        - python3
+        - scripts/gcp_network_governance.py
+        - "{{ gcp_projects | to_json }}"
+        - "{{ excel_file }}"
+~
+~
